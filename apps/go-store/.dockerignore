@@ -1,0 +1,8 @@
+.git
+.gitignore
+.vscode
+*.md
+**/*_test.go
+k8s
+Dockerfile
+.dockerignore

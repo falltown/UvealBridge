@@ -1,0 +1,29 @@
+# Headless Service: required by the StatefulSet's serviceName field.
+# clusterIP: None means k8s does NOT allocate a cluster IP and does NOT
+# load-balance. Instead, DNS returns one A record per pod, so callers
+# can address a specific replica:
+#   go-store-0.go-store-headless.go-store.svc.cluster.local
+# This is how Raft peers will discover each other in Stage 2.
+# Clients that just want "any pod, load-balanced" use the regular Service
+# in service.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-store-headless
+  namespace: go-store
+  labels:
+    app: go-store
+spec:
+  clusterIP: None
+  # Publish DNS A records for pods even before they pass readiness.
+  # Raft peers need to find each other at startup, well before the
+  # /healthz probe is meaningful. Without this, go-store-0 cannot
+  # resolve go-store-1.go-store-headless until pod 1 is Ready -- which
+  # in turn waits on a quorum that needs DNS to resolve. Deadlock.
+  publishNotReadyAddresses: true
+  selector:
+    app: go-store
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

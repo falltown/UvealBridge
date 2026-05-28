@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: go-store
+  namespace: go-store
+  labels:
+    app: go-store
+spec:
+  # serviceName must point at a headless Service (clusterIP: None).
+  # This is what gives each pod a stable DNS name:
+  #   go-store-0.go-store-headless.go-store.svc.cluster.local
+  serviceName: go-store-headless
+  # Start all pods concurrently. The default "OrderedReady" waits for
+  # pod N-1 to be Ready before starting pod N, which deadlocks a raft
+  # cluster: pod 0 needs pods 1 and 2 to reach quorum, but they never
+  # start until pod 0 is Ready -- which never happens.
+  podManagementPolicy: Parallel
+  # 3 replicas: still independent pods at this stage (no replication wired up
+  # yet). Each gets its own PVC (data-go-store-0/1/2) and its own WAL. Use
+  # the headless service DNS to talk to a specific pod:
+  #   go-store-0.go-store-headless.go-store.svc.cluster.local
+  # Hitting the ClusterIP Service (go-store) will round-robin and give
+  # inconsistent reads until replication lands -- that's expected.
+  replicas: 3
+  selector:
+    matchLabels:
+      app: go-store
+  template:
+    metadata:
+      labels:
+        app: go-store
+    spec:
+      # Pod-level securityContext. fsGroup tells the kubelet to chown the
+      # mounted volume's root to this GID and set the setgid bit, so the
+      # non-root container user (distroless "nonroot" = UID/GID 65532) can
+      # actually write to the freshly mounted Azure Disk. Without this,
+      # the disk is owned by root:root and our container gets EACCES.
+      # runAsNonRoot is enforced so a misconfigured image can't quietly
+      # run as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: go-store
+          image: acruvealbridge.azurecr.io/go-store:0.7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ADDR
+              value: ":8080"
+            # Note: DATA_DIR is intentionally not set. The binary always
+            # uses the in-memory SafeStore; raft is the cluster-wide
+            # source of truth. DATA_DIR will come back in Step 7 once
+            # raft has its own persistent log/snapshot storage.
+            # Downward API: inject this pod's own hostname (e.g.
+            # "go-store-1") so the binary can derive its raft node ID
+            # and the peer DNS names without any cluster API calls.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Total raft members. Must match spec.replicas above.
+            # Changing this requires careful coordination -- raft
+            # membership changes go through ConfChange (Step 10).
+            - name: CLUSTER_SIZE
+              value: "3"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/go-store
+  # One PVC per pod, auto-named "data-go-store-0", "data-go-store-1", ...
+  # Each gets its own Azure Disk. Disks survive pod restart and reschedule.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 4Gi
