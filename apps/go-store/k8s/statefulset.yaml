@@ -30,18 +30,15 @@ spec:
       labels:
         app: go-store
     spec:
-      # Pod-level securityContext. fsGroup tells the kubelet to chown the
-      # mounted volume's root to this GID and set the setgid bit, so the
-      # non-root container user (distroless "nonroot" = UID/GID 65532) can
-      # actually write to the freshly mounted Azure Disk. Without this,
-      # the disk is owned by root:root and our container gets EACCES.
-      # runAsNonRoot is enforced so a misconfigured image can't quietly
-      # run as root.
+      # Pod-level securityContext. runAsNonRoot is enforced so a
+      # misconfigured image can't quietly run as root. No fsGroup is
+      # needed because we don't mount any writable volumes -- all state
+      # is in-memory until raft persistence lands (Step 7), at which
+      # point fsGroup: 65532 comes back alongside the PVC.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
-        fsGroup: 65532
       containers:
         - name: go-store
           image: acruvealbridge.azurecr.io/go-store:0.8.0
@@ -92,17 +89,6 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/go-store
-  # One PVC per pod, auto-named "data-go-store-0", "data-go-store-1", ...
-  # Each gets its own Azure Disk. Disks survive pod restart and reschedule.
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: managed-csi
-        resources:
-          requests:
-            storage: 4Gi
+  # No volumeClaimTemplates: the binary uses the in-memory SafeStore and
+  # raft has no on-disk log/snapshot yet. PVCs (Azure Disk, managed-csi,
+  # 4Gi) come back in Step 7 when raft persistence lands.

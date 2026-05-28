@@ -16,7 +16,7 @@ az aks get-credentials --name uvealbridge --resource-group uvealbridge --overwri
 ACR: `acruvealbridge.azurecr.io`. Bump the tag in [k8s/statefulset.yaml](k8s/statefulset.yaml) to match.
 
 ```powershell
-$TAG = "0.5.0"
+$TAG = "0.8.0"
 
 # Option A: build remotely in ACR (no local Docker needed)
 az acr build --registry acruvealbridge --image go-store:$TAG .
