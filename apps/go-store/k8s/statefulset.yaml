@@ -44,7 +44,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: go-store
-          image: acruvealbridge.azurecr.io/go-store:0.7.0
+          image: acruvealbridge.azurecr.io/go-store:0.8.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
